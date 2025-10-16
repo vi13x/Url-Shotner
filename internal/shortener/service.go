@@ -38,7 +38,6 @@ func (s *Service) Shorten(ctx context.Context, original string) (string, error) 
 
 	for i := 0; i < maxAttempts; i++ {
 		id := generateID()
-		// Проверка коллизии: если такой id уже есть, пробуем снова
 		if _, ok, _ := s.store.Get(ctx, id); ok {
 			continue
 		}
@@ -59,7 +58,6 @@ func normalizeURL(raw string) (string, error) {
 	if trimmed == "" {
 		return "", ErrInvalidURL
 	}
-	// Добавим схему по умолчанию
 	if !strings.HasPrefix(trimmed, "http://") && !strings.HasPrefix(trimmed, "https://") {
 		trimmed = "https://" + trimmed
 	}
@@ -67,20 +65,16 @@ func normalizeURL(raw string) (string, error) {
 	if err != nil || u.Host == "" {
 		return "", ErrInvalidURL
 	}
-	// Нормализуем host к нижнему регистру
 	u.Host = strings.ToLower(u.Host)
 	return u.String(), nil
 }
 
-// generateID генерирует компактный id из криптографически случайных байт.
 func generateID() string {
-	// 5 байт дают ~40 бит энтропии, после base64 URL-safe получим около 7 символов
 	b := make([]byte, 5)
 	_, _ = rand.Read(b)
 	s := base64.RawURLEncoding.EncodeToString(b)
 	if len(s) > idLength {
 		return s[:idLength]
 	}
-	// На случай редкой короткой строки дополним timestamp'ом
 	return (s + base64.RawURLEncoding.EncodeToString([]byte(time.Now().Format("150405"))))[:idLength]
 }

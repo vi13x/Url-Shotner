@@ -5,7 +5,6 @@ import (
 	"sync"
 )
 
-// MemoryStorage — потокобезопасное in-memory хранилище.
 type MemoryStorage struct {
 	mu   sync.RWMutex
 	data map[string]string

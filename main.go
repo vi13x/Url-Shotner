@@ -2,10 +2,15 @@ package main
 
 import (
 	"context"
+	"embed"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -14,16 +19,41 @@ import (
 	"URL_shortener/internal/storage"
 )
 
+//go:embed web/*
+var embeddedWeb embed.FS
+
 func main() {
-	addr := getEnv("ADDR", ":8080")
-	baseURL := getEnv("BASE_URL", "http://localhost"+addr)
+	addr := ":8080"
+	baseURL := "http://localhost" + addr
 
 	store := storage.NewMemoryStorage()
 	svc := shortener.NewService(store)
 	api := httpapi.NewHandler(svc, baseURL)
 
 	mux := http.NewServeMux()
-	mux.Handle("/", http.FileServer(http.Dir("web")))
+	webFS, err := fs.Sub(embeddedWeb, "web")
+	if err != nil {
+		log.Fatalf("embed sub fs error: %v", err)
+	}
+	staticFS, err := fs.Sub(webFS, "static")
+	if err != nil {
+		log.Fatalf("embed static fs error: %v", err)
+	}
+	fsys := http.FS(webFS)
+	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.FileServer(fsys).ServeHTTP(w, r)
+			return
+		}
+		data, err := fs.ReadFile(webFS, "index.html")
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(data)
+	})
 	mux.Handle("/api/", api.Routes())
 	mux.Handle("/s/", api.Routes())
 
@@ -35,6 +65,8 @@ func main() {
 			log.Fatalf("server error: %v", err)
 		}
 	}()
+
+	_ = openBrowser(baseURL)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -56,9 +88,17 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func getEnv(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+func openBrowser(url string) error {
+	switch runtime.GOOS {
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	case "darwin":
+		return exec.Command("open", url).Start()
+	default:
+		if os.Getenv("BROWSER") != "" {
+			parts := strings.Split(os.Getenv("BROWSER"), " ")
+			return exec.Command(parts[0], append(parts[1:], url)...).Start()
+		}
+		return exec.Command("xdg-open", url).Start()
 	}
-	return def
 }
