@@ -4,7 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>URL Shortener</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/static/styles.css">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0f172a">
 </head>
 <body>
   <main class="container">
@@ -12,14 +15,34 @@
     <form id="form" class="card">
       <label for="url">Вставьте ссылку</label>
       <input id="url" type="url" placeholder="https://example.com/very/long/url" required>
-      <button type="submit">Укоротить</button>
+      <button id="shortenBtn" type="submit">Укоротить</button>
     </form>
     <div id="result" class="result hidden"></div>
   </main>
+  <div id="toast" class="toast hidden"></div>
   <script>
     const form = document.getElementById('form');
     const urlInput = document.getElementById('url');
     const result = document.getElementById('result');
+    const toast = document.getElementById('toast');
+    const shortenBtn = document.getElementById('shortenBtn');
+
+    function showToast(message, type = 'info') {
+      toast.textContent = message;
+      toast.className = `toast ${type}`;
+      requestAnimationFrame(() => toast.classList.remove('hidden'));
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(() => toast.classList.add('hidden'), 2500);
+    }
+
+    async function onCopy(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast('Ссылка скопирована', 'success');
+      } catch (e) {
+        showToast('Не удалось скопировать', 'error');
+      }
+    }
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -27,6 +50,9 @@
       if (!url) return;
       result.classList.add('hidden');
       result.textContent = '';
+      shortenBtn.disabled = true;
+      const originalText = shortenBtn.textContent;
+      shortenBtn.textContent = 'Укорачиваю…';
       try {
         const resp = await fetch('/api/shorten', {
           method: 'POST',
@@ -38,16 +64,36 @@
           throw new Error(text || 'Ошибка запроса');
         }
         const data = await resp.json();
-        result.innerHTML = `Короткая ссылка: <a href="${data.shortUrl}" target="_blank">${data.shortUrl}</a>`;
+        const shortUrl = data.shortUrl;
+        result.innerHTML = `
+          <div class="result-row">
+            <span class="muted">Короткая ссылка</span>
+            <div class="link-row">
+              <a href="${shortUrl}" target="_blank">${shortUrl}</a>
+              <button type="button" class="ghost" id="copyBtn" aria-label="Скопировать">Копировать</button>
+            </div>
+          </div>`;
+        const copyBtn = document.getElementById('copyBtn');
+        copyBtn.addEventListener('click', () => onCopy(shortUrl));
         result.classList.remove('hidden');
+        showToast('Готово!', 'success');
       } catch (err) {
         result.textContent = err.message || String(err);
         result.classList.remove('hidden');
+        showToast('Ошибка: ' + (err.message || 'Неизвестно'), 'error');
+      } finally {
+        shortenBtn.disabled = false;
+        shortenBtn.textContent = originalText;
+      }
+    });
+
+    urlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        form.requestSubmit();
       }
     });
   </script>
 </body>
-  
 </html>
 
 
