@@ -4,7 +4,7 @@ import (
 	"context"
 	"embed"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -14,33 +14,44 @@ import (
 	"syscall"
 	"time"
 
+	"URL_shortener/internal/config"
 	"URL_shortener/internal/httpapi"
+	"URL_shortener/internal/middleware"
 	"URL_shortener/internal/shortener"
 	"URL_shortener/internal/storage"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 //go:embed web/*
 var embeddedWeb embed.FS
 
 func main() {
-	addr := ":8080"
-	baseURL := "http://localhost" + addr
+	cfg := config.Load()
+
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
 
 	store := storage.NewMemoryStorage()
 	svc := shortener.NewService(store)
-	api := httpapi.NewHandler(svc, baseURL)
+	api := httpapi.NewHandler(svc, cfg.BaseURL)
 
 	mux := http.NewServeMux()
 	webFS, err := fs.Sub(embeddedWeb, "web")
 	if err != nil {
-		log.Fatalf("embed sub fs error: %v", err)
+		logger.Error("embed sub fs error", "error", err)
+		os.Exit(1)
 	}
 	staticFS, err := fs.Sub(webFS, "static")
 	if err != nil {
-		log.Fatalf("embed static fs error: %v", err)
+		logger.Error("embed static fs error", "error", err)
+		os.Exit(1)
 	}
 	fsys := http.FS(webFS)
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.FileServer(fsys).ServeHTTP(w, r)
@@ -57,35 +68,46 @@ func main() {
 	mux.Handle("/api/", api.Routes())
 	mux.Handle("/s/", api.Routes())
 
-	srv := &http.Server{Addr: addr, Handler: loggingMiddleware(mux)}
+	handler := middleware.CORS()(
+		middleware.RateLimit(cfg.RateLimit, cfg.RateWindow)(
+			middleware.Metrics()(
+				middleware.JSONLogging(logger)(
+					mux,
+				),
+			),
+		),
+	)
+
+	srv := &http.Server{
+		Addr:         cfg.Addr,
+		Handler:      handler,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
 
 	go func() {
-		log.Printf("Listening on %s", addr)
+		logger.Info("Starting server", "addr", cfg.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("server error: %v", err)
+			logger.Error("Server error", "error", err)
+			os.Exit(1)
 		}
 	}()
 
-	_ = openBrowser(baseURL)
+	_ = openBrowser(cfg.BaseURL)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	logger.Info("Shutting down server...")
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Printf("graceful shutdown error: %v", err)
-	}
-	log.Println("server stopped")
-}
 
-func loggingMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		next.ServeHTTP(w, r)
-		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
-	})
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("Graceful shutdown error", "error", err)
+	}
+	logger.Info("Server stopped")
 }
 
 func openBrowser(url string) error {
