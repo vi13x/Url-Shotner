@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>URL Shortener</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="container">
+    <h1>Укорачиватель ссылок</h1>
+    <form id="form" class="card">
+      <label for="url">Вставьте ссылку</label>
+      <input id="url" type="url" placeholder="https://example.com/very/long/url" required>
+      <button type="submit">Укоротить</button>
+    </form>
+    <div id="result" class="result hidden"></div>
+  </main>
+  <script>
+    const form = document.getElementById('form');
+    const urlInput = document.getElementById('url');
+    const result = document.getElementById('result');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const url = urlInput.value.trim();
+      if (!url) return;
+      result.classList.add('hidden');
+      result.textContent = '';
+      try {
+        const resp = await fetch('/api/shorten', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url })
+        });
+        if (!resp.ok) {
+          const text = await resp.text();
+          throw new Error(text || 'Ошибка запроса');
+        }
+        const data = await resp.json();
+        result.innerHTML = `Короткая ссылка: <a href="${data.shortUrl}" target="_blank">${data.shortUrl}</a>`;
+        result.classList.remove('hidden');
+      } catch (err) {
+        result.textContent = err.message || String(err);
+        result.classList.remove('hidden');
+      }
+    });
+  </script>
+</body>
+  
+</html>
+
+
