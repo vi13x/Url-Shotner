@@ -29,7 +29,6 @@ func NewService(store storage.Storage) *Service {
 	return &Service{store: store}
 }
 
-// Shorten валидирует входной URL, нормализует и сохраняет с уникальным id.
 func (s *Service) Shorten(ctx context.Context, original string) (string, error) {
 	normalized, err := normalizeURL(original)
 	if err != nil {
